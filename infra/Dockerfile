@@ -2,6 +2,7 @@ FROM node:22-bookworm-slim AS base
 
 ENV PNPM_HOME=/pnpm \
     PATH=/pnpm:${PATH} \
+    COREPACK_HOME=/opt/corepack \
     NEXT_TELEMETRY_DISABLED=1
 
 RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
@@ -30,6 +31,9 @@ RUN pnpm prisma:generate \
 FROM base AS runtime
 
 ENV NODE_ENV=production
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=node:node /app /app
 USER node
 

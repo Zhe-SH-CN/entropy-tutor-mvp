@@ -33,7 +33,7 @@ jobs:
             printf 'POSTGRES_PASSWORD=%s\n' "$postgres_password"
             printf '%s\n' 'POSTGRES_DB=entropy_tutor'
             printf 'DATABASE_URL=postgresql://entropy_tutor:%s@127.0.0.1:5432/entropy_tutor\n' "$postgres_password"
-            printf '%s\n' 'APP_ORIGIN=http://localhost:3000'
+            printf '%s\n' 'APP_ORIGIN=http://127.0.0.1:3000'
             printf 'SESSION_SECRET=%s\n' "$(openssl rand -hex 32)"
             printf 'BYOK_MASTER_KEY=%s\n' "$(openssl rand -hex 32)"
             printf 'PAYMENT_WEBHOOK_SECRET=%s\n' "$(openssl rand -hex 32)"
