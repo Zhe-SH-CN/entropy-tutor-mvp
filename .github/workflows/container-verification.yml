@@ -73,9 +73,10 @@ jobs:
           docker compose exec -T api sh -c 'test "$(id -u)" = 1000'
           docker compose exec -T worker sh -c 'test "$(id -u)" = 1000'
           docker compose exec -T web sh -c 'test "$(id -u)" = 1000'
-          postgres_endpoint="$(docker compose port postgres 5432 2>/dev/null || true)"
-          if [ -n "$postgres_endpoint" ]; then
-            printf '%s\n' 'PostgreSQL must not publish a host port.' >&2
+          postgres_container="$(docker compose ps --quiet postgres)"
+          postgres_bindings="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$postgres_container")"
+          if [ "$postgres_bindings" != 'null' ] && [ "$postgres_bindings" != '{}' ]; then
+            printf 'PostgreSQL has unexpected host port bindings: %s\n' "$postgres_bindings" >&2
             exit 1
           fi
 
