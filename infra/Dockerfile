@@ -22,6 +22,8 @@ RUN pnpm install --frozen-lockfile
 
 FROM dependencies AS build
 
+ARG API_ORIGIN=http://api:3001
+ENV API_ORIGIN=${API_ORIGIN}
 COPY . .
 RUN pnpm prisma:generate \
   && pnpm --filter @mvp/shared build \

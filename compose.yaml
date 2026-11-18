@@ -100,6 +100,8 @@ services:
       context: .
       dockerfile: infra/Dockerfile
       target: web
+      args:
+        API_ORIGIN: http://api:3001
     environment:
       API_ORIGIN: http://api:3001
     depends_on:

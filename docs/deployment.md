@@ -16,6 +16,8 @@
 
 API 和 Web 默认仅绑定回环地址。局域网或公网访问应通过 SSH 隧道或受控 HTTPS 反向代理，不要直接把容器端口开放到所有接口。
 
+Next.js 的同源 rewrite 在构建时确定。Compose 默认将 Web 的 `API_ORIGIN` 构建参数设为 `http://api:3001`；如改变内部 API 地址，必须同步修改该构建参数并重新构建 Web，不能只改运行时环境变量。
+
 ## 环境要求
 
 - 64 位 Linux 服务器，或支持 Docker 的本地开发机
