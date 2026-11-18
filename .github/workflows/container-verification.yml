@@ -2,6 +2,12 @@ name: Container verification
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_image:
+        description: Publish the verified application image to GHCR
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -152,3 +158,61 @@ jobs:
       - name: Clean up CI containers and volumes
         if: always()
         run: docker compose down --volumes --remove-orphans
+
+  publish-image:
+    name: Publish application image to GHCR
+    if: inputs.publish_image
+    needs: compose-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+
+      - name: Build and publish immutable and latest tags
+        shell: bash
+        env:
+          IMAGE_REPOSITORY: ghcr.io/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          image_repository="${IMAGE_REPOSITORY,,}"
+          immutable_tag="sha-${GITHUB_SHA::12}"
+
+          docker build --pull \
+            --file infra/Dockerfile \
+            --target app \
+            --build-arg API_ORIGIN=http://api:3001 \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "$image_repository:$immutable_tag" \
+            --tag "$image_repository:latest" \
+            .
+
+          test "$(docker image inspect --format '{{.Config.User}}' "$image_repository:$immutable_tag")" = 'node'
+          docker run --rm --entrypoint node "$image_repository:$immutable_tag" -e '
+            const manifest = require("/app/apps/web/.next/routes-manifest.json");
+            const rewrite = manifest.rewrites.afterFiles.find((item) => item.source === "/api/v1/:path*");
+            if (rewrite?.destination !== "http://api:3001/api/v1/:path*") {
+              throw new Error("Unexpected API rewrite destination");
+            }
+          '
+
+          docker push "$image_repository:$immutable_tag"
+          docker push "$image_repository:latest"
+
+          {
+            printf '## Published container image\n\n'
+            printf -- '- Immutable pull: `docker pull %s:%s`\n' "$image_repository" "$immutable_tag"
+            printf -- '- Latest pull: `docker pull %s:latest`\n' "$image_repository"
+            printf -- '- Package: %s\n' "https://github.com/${GITHUB_REPOSITORY_OWNER}/pkgs/container/${GITHUB_REPOSITORY#*/}"
+          } >> "$GITHUB_STEP_SUMMARY"
