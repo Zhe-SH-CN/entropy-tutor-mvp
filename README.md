@@ -12,6 +12,8 @@
 
 详细边界见 [`docs/prd-coverage.md`](docs/prd-coverage.md)、[`docs/event-dictionary.md`](docs/event-dictionary.md) 和 [`docs/security-review-c.md`](docs/security-review-c.md)。
 
+服务器部署与 Docker/Workflow 研判见 [`docs/deployment.md`](docs/deployment.md)；公开仓库敏感信息审查见 [`docs/public-release-audit.md`](docs/public-release-audit.md)。**公开代码不等于公开服务：统一演示密码已公开，当前部署必须放在 SSH 隧道、内网或其他访问控制之后。**
+
 ## Monorepo 结构
 
 ```text
@@ -26,7 +28,7 @@ prisma/
   seed.ts              全合成数据；运行会重置 Demo 数据
 tests/e2e/             Chromium 端到端测试
 docs/                  ADR、行为合同、安全审查、覆盖矩阵和截图
-infra/                 早期容器草稿；本轮未验证，不是当前交付前提
+infra/                 容器草稿；未构建/冒烟，不能当一键部署方案
 ```
 
 技术栈：TypeScript、pnpm workspace、Next.js 16、React 19、NestJS 11、Prisma 6、PostgreSQL 14+、Vitest/Jest/Playwright。选择依据见 [`docs/ADR-001-tech-stack.md`](docs/ADR-001-tech-stack.md)。
@@ -100,11 +102,11 @@ pnpm --filter @mvp/api worker:dev
 
 统一密码：`DemoPass123!`
 
-| 角色 | 邮箱 |
-|---|---|
-| 家长 | `parent@demo.test` |
+| 角色 | 邮箱                |
+| ---- | ------------------- |
+| 家长 | `parent@demo.test`  |
 | 教师 | `teacher@demo.test` |
-| 运营 | `ops@demo.test` |
+| 运营 | `ops@demo.test`     |
 
 四名教师档案均为合成数据，其中一名初始待审核。支付和会议是沙箱，不发生真实扣款，也不创建真实会议。
 
@@ -150,6 +152,10 @@ git push -u origin feat/<简短功能名>
 ```
 
 通过 Pull Request 二次开发。本轮按用户要求不创建 GitHub Workflow；协作者需在本地执行上述检查。
+
+## 许可证与协作边界
+
+当前未选择开源许可证；公开可见不等于授予第三方复制、修改、再分发或商用许可。现阶段的用途是你们团队内部协作。后续若要正式开源，请由团队明确代码权属并共同选择许可证，不要默认套用 MIT/Apache。
 
 ## 尚未完成、不能误称完成的事项
 

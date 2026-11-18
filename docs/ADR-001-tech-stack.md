@@ -16,7 +16,7 @@ MVP 的主要复杂性是角色权限、关系数据、状态事务、规则回�
 - AI 使用服务端 Model Gateway：明确标识的 Mock、OpenAI 兼容托管提供方、BYOK 三种模式。密钥不进入浏览器、不通过日志输出、不向客户端回显。
 - 异步任务优先复用 PostgreSQL，不为首版强制引入 Redis、Kafka 或微服务。
 - 测试使用规则单元测试、API/数据库集成测试和 Playwright 端到端测试。
-- 提供 Docker Compose 部署配置；当前环境无 Docker，因此本地 PostgreSQL 与 Node 进程用于实际验证，容器状态单独披露。
+- 保留 Docker Compose 作为目标部署形态；当前环境无 Docker，本地 PostgreSQL 与 Node 进程用于实际验证。`infra/` 在容器构建和冒烟通过前只视为草稿。
 - Python 仅用于后续离线分析。Go、Rust、C++、GraphQL、Kubernetes 和独立特征平台不进入首版。
 
 ## 备选方案与取舍

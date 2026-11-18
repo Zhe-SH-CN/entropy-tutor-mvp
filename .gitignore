@@ -13,3 +13,5 @@ test-results/
 .tmp-tool-results/
 draft_*_folder/
 *.tsbuildinfo
+*.zip
+*.dump
