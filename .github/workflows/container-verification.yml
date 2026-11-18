@@ -73,7 +73,8 @@ jobs:
           docker compose exec -T api sh -c 'test "$(id -u)" = 1000'
           docker compose exec -T worker sh -c 'test "$(id -u)" = 1000'
           docker compose exec -T web sh -c 'test "$(id -u)" = 1000'
-          if docker compose port postgres 5432 > /dev/null 2>&1; then
+          postgres_endpoint="$(docker compose port postgres 5432 2>/dev/null || true)"
+          if [ -n "$postgres_endpoint" ]; then
             printf '%s\n' 'PostgreSQL must not publish a host port.' >&2
             exit 1
           fi
