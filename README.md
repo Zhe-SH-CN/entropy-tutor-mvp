@@ -29,14 +29,24 @@ Next.js Web ─────────────► NestJS API ────�
 
 系统采用模块化单体，包含 Web、API、Worker 三个常驻进程和一个 PostgreSQL 数据库。详见[系统架构](docs/architecture.md)。
 
-## Docker 快速启动
+## Docker 部署
 
 ### 环境要求
 
+- 64 位 Linux 服务器，或支持 Docker 的本地开发机
 - Docker Engine 与 Compose v2
-- 建议至少 4 GB 内存、20 GB 可用磁盘
+- 建议至少 2 vCPU、4 GB 内存和 20 GB 可用磁盘
 
-### 启动服务
+部署方式：
+
+| 方式         | 适用场景           | 是否需要 Node.js / pnpm | 是否构建镜像 |
+| ------------ | ------------------ | ----------------------- | ------------ |
+| GHCR 镜像    | 服务器、内部 Demo  | 不需要                  | 不需要       |
+| 本地源码构建 | 二次开发、修改代码 | 仅容器部署时不需要      | 需要         |
+
+### 1. 获取代码和配置
+
+Compose 配置、数据库迁移和环境变量模板仍从仓库获取：
 
 ```bash
 git clone https://github.com/Zhe-SH-CN/entropy-tutor-mvp.git
@@ -44,28 +54,103 @@ cd entropy-tutor-mvp
 cp .env.example .env
 ```
 
-替换 `.env` 中所有 `replace-with-*` 配置。可使用 `openssl rand -hex 32` 分别生成独立秘密。
+### 2. 配置环境变量
+
+替换 `.env` 中所有 `replace-with-*` 值。独立随机秘密可用 `openssl rand -hex 32` 分别生成，不要提交 `.env`。
+
+使用已发布镜像时，将 `.env` 中的 `APP_IMAGE` 改为：
+
+```dotenv
+APP_IMAGE=ghcr.io/zhe-sh-cn/entropy-tutor-mvp:latest
+```
+
+主要配置：
+
+| 变量                     | 说明                                                        |
+| ------------------------ | ----------------------------------------------------------- |
+| `APP_IMAGE`              | GHCR 镜像地址，或本地构建使用的 `entropy-tutor-app:local`   |
+| `POSTGRES_USER`          | 独立的数据库应用角色                                        |
+| `POSTGRES_PASSWORD`      | 高熵随机数据库密码                                          |
+| `POSTGRES_DB`            | 数据库名称，默认 `entropy_tutor`                            |
+| `APP_ORIGIN`             | 浏览器实际访问来源；SSH 隧道为 `http://localhost:3000`      |
+| `SESSION_SECRET`         | 独立的随机会话秘密                                          |
+| `BYOK_MASTER_KEY`        | 32 字节随机十六进制，共 64 个字符                           |
+| `PAYMENT_WEBHOOK_SECRET` | 独立的沙箱回调验签秘密                                      |
+| `COOKIE_SECURE`          | 本机 HTTP 为 `false`；HTTPS 必须为 `true`                   |
+| `AI_MODE`                | 默认 `mock`；接入托管模型前阅读[安全模型](docs/security.md) |
+
+`latest` 适用于快速启动内部 Demo，并会随后续手动验收发布移动。需要固定环境或审计回滚时，改用 GHCR 提供的不可变标签：
+
+```dotenv
+APP_IMAGE=ghcr.io/zhe-sh-cn/entropy-tutor-mvp:sha-<短提交>
+```
+
+镜像包页面：<https://github.com/Zhe-SH-CN/entropy-tutor-mvp/pkgs/container/entropy-tutor-mvp>。如果包设置为私有，服务器需先通过 `docker login ghcr.io --username <github-user>` 完成认证。
+
+### 3A. 使用 GHCR 镜像启动（推荐服务器）
+
+```bash
+docker compose pull
+docker compose up --no-build -d
+docker compose ps
+```
+
+该方式不需要在服务器安装 Node.js、pnpm，也不需要执行前端或后端构建。
+
+### 3B. 从源码构建启动
+
+二次开发或修改代码后，保持 `.env` 中：
+
+```dotenv
+APP_IMAGE=entropy-tutor-app:local
+```
+
+然后执行：
 
 ```bash
 docker compose up --build -d
 docker compose ps
 ```
 
-仅在全新的合成数据库中初始化一次演示数据：
+启动顺序为 PostgreSQL 健康 → 数据库迁移成功 → API 健康 → Worker 与 Web。查看日志：
+
+```bash
+docker compose logs -f api worker web
+```
+
+### 4. 初始化合成数据
+
+仅在全新的 Demo 数据库中执行一次：
 
 ```bash
 docker compose run --rm -e DEMO_SEED=true migrate pnpm seed
 ```
 
-> **破坏性操作：** Seed 会删除并重建 Demo 数据。不得对包含重要数据的数据库执行。
+> **破坏性操作：** Seed 会删除并重建 Demo 数据。不得对包含重要数据的数据库执行；日常重启和升级不得执行 Seed。
 
-访问入口：
+### 5. 验证和访问
+
+```bash
+curl --fail http://127.0.0.1:3001/api/v1/health
+curl --fail --head http://127.0.0.1:3000/server-demo
+docker compose ps
+```
+
+入口：
 
 - 应用：<http://localhost:3000/server-demo>
 - API 健康检查：<http://localhost:3001/api/v1/health>
 - OpenAPI：<http://localhost:3001/api/docs>
 
-使用 `docker compose down` 停止服务，PostgreSQL 数据保留在命名卷中。HTTPS、升级、备份与恢复见[部署指南](docs/deployment.md)。
+当 Web 仅绑定服务器回环地址时，在访问端建立 SSH 隧道：
+
+```bash
+ssh -N -L 3000:127.0.0.1:3000 <user>@<server>
+```
+
+随后访问 `http://localhost:3000/server-demo`。该方式不需要向公网开放 3000、3001 或 5432。
+
+使用 `docker compose down` 停止服务，PostgreSQL 数据保留在命名卷中；不要在需要保留数据时使用 `docker compose down -v`。HTTPS、镜像更新、备份、恢复与回滚见[部署指南](docs/deployment.md)。
 
 ## 本地开发
 
@@ -112,7 +197,15 @@ pnpm test:e2e
 
 测试使用合成数据，并重置相应数据库。执行前请阅读[测试指南](docs/testing.md)。
 
-GitHub Actions 中的 **Container verification** 工作流可手动构建并验收完整 Compose 环境，包括浏览器主链和持久化检查；不会因 push 自动运行。验收通过后可发布 GHCR 镜像，拉取与部署方式见[部署指南](docs/deployment.md#镜像发布与拉取)。
+### 容器验收与镜像发布
+
+GitHub Actions 中的 **Container verification** 工作流可手动构建并验收完整 Compose 环境，包括浏览器主链和持久化检查；不会因 push 自动运行。
+
+1. 打开 **Actions → Container verification → Run workflow**。
+2. 保持 `publish_image=true`；仅做验收而不发布镜像时可关闭。
+3. 验收通过后，在运行摘要中获取 GHCR 包页面和 `docker pull` 地址。
+
+发布会提供 `latest` 和不可变的 `sha-<短提交>` 标签。服务器部署、镜像认证和固定版本策略见[部署指南](docs/deployment.md#镜像发布与拉取)。
 
 ## 仓库结构
 
