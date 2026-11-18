@@ -34,6 +34,21 @@ pnpm test:e2e
 
 Playwright 使用生产 Next.js 入口和真实 PostgreSQL，不是静态组件快照。失败时检查 `test-results/` 和 `playwright-report/` 中的截图与 trace。
 
+## 手动容器验收
+
+仓库提供 `.github/workflows/container-verification.yml`，只在 GitHub Actions 页面手动选择 **Container verification → Run workflow** 时运行，不因 push 自动触发。
+
+该工作流在隔离的 Linux runner 中：
+
+1. 生成不离开 runner 的随机配置；
+2. 构建多阶段 Dockerfile 并启动完整 Compose 服务；
+3. 执行数据库迁移和合成数据初始化；
+4. 检查 API/Web 健康、非 root 运行用户和数据库端口隔离；
+5. 执行 8 项 Chromium 产品流程；
+6. 重建容器并验证 PostgreSQL 持久卷中的业务数据保持不变。
+
+日志、Playwright 报告和失败 trace 作为运行产物保留 7 天。工作流只验证候选提交，不发布镜像，也不部署到服务器；CI 数据库卷在结束时删除。
+
 ## 数据库副作用
 
 测试具有明确的数据重置行为：

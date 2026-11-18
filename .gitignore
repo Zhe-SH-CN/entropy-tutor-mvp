@@ -16,3 +16,4 @@ draft_*_folder/
 *.zip
 *.dump
 backups/
+ci-logs/

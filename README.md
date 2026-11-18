@@ -112,6 +112,8 @@ pnpm test:e2e
 
 测试使用合成数据，并重置相应数据库。执行前请阅读[测试指南](docs/testing.md)。
 
+GitHub Actions 中的 **Container verification** 工作流可手动构建并验收完整 Compose 环境，包括浏览器主链和持久化检查；不会因 push 自动运行。
+
 ## 仓库结构
 
 ```text

@@ -12,5 +12,6 @@ test-results
 playwright-report
 docs/screenshots
 backups
+ci-logs
 *.log
 .DS_Store
