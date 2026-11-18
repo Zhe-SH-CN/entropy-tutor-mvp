@@ -39,13 +39,15 @@ RUN apt-get update \
 COPY --from=build --chown=node:node /app /app
 USER node
 
-FROM runtime AS api
+FROM runtime AS app
 EXPOSE 3001
 CMD ["node", "apps/api/dist/main.js"]
 
-FROM runtime AS worker
+FROM app AS api
+
+FROM app AS worker
 CMD ["node", "apps/api/dist/worker.js"]
 
-FROM runtime AS web
+FROM app AS web
 EXPOSE 3000
 CMD ["pnpm", "--filter", "@mvp/web", "start"]
