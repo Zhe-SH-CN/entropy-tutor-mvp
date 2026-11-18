@@ -33,7 +33,7 @@ jobs:
             printf 'POSTGRES_PASSWORD=%s\n' "$postgres_password"
             printf '%s\n' 'POSTGRES_DB=entropy_tutor'
             printf 'DATABASE_URL=postgresql://entropy_tutor:%s@127.0.0.1:5432/entropy_tutor\n' "$postgres_password"
-            printf '%s\n' 'APP_ORIGIN=http://localhost:3000'
+            printf '%s\n' 'APP_ORIGIN=http://127.0.0.1:3000'
             printf 'SESSION_SECRET=%s\n' "$(openssl rand -hex 32)"
             printf 'BYOK_MASTER_KEY=%s\n' "$(openssl rand -hex 32)"
             printf 'PAYMENT_WEBHOOK_SECRET=%s\n' "$(openssl rand -hex 32)"
@@ -73,8 +73,10 @@ jobs:
           docker compose exec -T api sh -c 'test "$(id -u)" = 1000'
           docker compose exec -T worker sh -c 'test "$(id -u)" = 1000'
           docker compose exec -T web sh -c 'test "$(id -u)" = 1000'
-          if docker compose port postgres 5432 > /dev/null 2>&1; then
-            printf '%s\n' 'PostgreSQL must not publish a host port.' >&2
+          postgres_container="$(docker compose ps --quiet postgres)"
+          postgres_bindings="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$postgres_container")"
+          if [ "$postgres_bindings" != 'null' ] && [ "$postgres_bindings" != '{}' ]; then
+            printf 'PostgreSQL has unexpected host port bindings: %s\n' "$postgres_bindings" >&2
             exit 1
           fi
 

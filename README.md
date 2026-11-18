@@ -1,116 +1,104 @@
-# 熵曦 AI 原生家教平台 · 内部 MVP
+# Entropy Tutor · 熵曦家教平台
 
-普通家教平台底座 + 大学生教师 AI 工作台 + 可解释的双向推荐。当前仓库用于创始团队内部交流、合成数据演示和二次开发，**不是已经接入真实家庭、真实扣款或生产模型的线上产品**。
+面向精选大学生教师的 AI 原生家教交付与双向匹配系统。
 
-## 已实现的内部 Demo
+项目将家教交易平台、标准化教学交付和可解释推荐整合在同一套业务流程中，并把已确认履约转化为后续匹配可复用的行为证据。
 
-- 家长：创建需求 → Mock 结构化 → 家长确认 → Top 3 → 真实候选曝光 → 邀请 → 双方见面 → 沙箱订单 → 课次确认 → 报告已读 → 继续/暂停/换老师。
-- 教师：审核状态与可用性、接受/拒单、见面异常、关系备课卡、记课、学习状态与课后报告的教师审核、Mock/托管/OpenAI 兼容 BYOK 模型网关。
-- 运营：教师审核/暂停、人工改派、AI 输出质量评审、30 日成熟 cohort、探索配额、异常队列、规则回放和事件审计。
-- 推荐：`40P + 20E + 20R + 20C - 10B - 10L² + X`，保存输入快照、评分明细和规则选项；履约确认后重算可信教师聚合特征。
-- 工程：Argon2id、HttpOnly 随机会话、CSRF、角色和资源级授权、PostgreSQL 事务、订单/支付回调幂等、后台任务重试与死信、BYOK AES-256-GCM 与 URL 访问控制。
+> **项目状态：内部功能 Demo。** 支付与视频会议使用沙箱适配器，AI 默认使用 Mock。仓库不包含真实客户、真实交易或生产环境数据，不应直接作为公开生产服务运行。
 
-详细边界见 [`docs/prd-coverage.md`](docs/prd-coverage.md)、[`docs/event-dictionary.md`](docs/event-dictionary.md) 和 [`docs/security-review-c.md`](docs/security-review-c.md)。
+## 核心能力
 
-服务器部署与 Docker/Workflow 研判见 [`docs/deployment.md`](docs/deployment.md)；公开仓库敏感信息审查见 [`docs/public-release-audit.md`](docs/public-release-audit.md)。**公开代码不等于公开服务：统一演示密码已公开，当前部署必须放在 SSH 隧道、内网或其他访问控制之后。**
+- **家长端**：创建并确认需求、比较 Top 3 候选、预约见面、管理沙箱订单、确认课次、查看教师审核后的报告，以及继续、暂停或更换教师。
+- **教师端**：维护可授时间与容量、接受或拒绝邀请、处理见面异常、备课、记课、审核 AI 草稿，以及管理模型配置。
+- **运营端**：教师准入与暂停、人工改派、AI 输出质量评审、异常处理、推荐回放、cohort 分析和事件审计。
+- **双向匹配**：资格硬过滤、七项可解释评分、冷启动先验、负载控制、有限探索、输入快照与规则回放。
+- **AI 教学闭环**：生成关系备课卡、学习状态建议和课后报告；教师确认后方可向家长交付。
+- **工程控制**：角色与资源级授权、数据库事务、订单及回调幂等、后台任务重试、结构化事件审计和 BYOK 密钥保护。
 
-## Monorepo 结构
+## 系统架构
 
 ```text
-apps/
-  web/                 Next.js / React 三角色界面
-  api/                 NestJS API、 worker、集成测试
-packages/
-  shared/              需求合同、推荐规则及 13 个规则测试
-prisma/
-  schema.prisma        数据模型
-  migrations/          可重复 deploy 的迁移
-  seed.ts              全合成数据；运行会重置 Demo 数据
-tests/e2e/             Chromium 端到端测试
-docs/                  ADR、行为合同、安全审查、覆盖矩阵和截图
-infra/                 容器草稿；未构建/冒烟，不能当一键部署方案
+Browser
+   │ same-origin /api/v1
+   ▼
+Next.js Web ─────────────► NestJS API ─────► PostgreSQL ◄──── Worker
+                              │
+                              ▼
+                         Model Gateway ─────► Mock / Hosted / BYOK
 ```
 
-技术栈：TypeScript、pnpm workspace、Next.js 16、React 19、NestJS 11、Prisma 6、PostgreSQL 14+、Vitest/Jest/Playwright。选择依据见 [`docs/ADR-001-tech-stack.md`](docs/ADR-001-tech-stack.md)。
+系统采用模块化单体，包含 Web、API、Worker 三个常驻进程和一个 PostgreSQL 数据库。详见[系统架构](docs/architecture.md)。
 
-## 在自己的电脑或服务器启动
+## Docker 快速启动
 
-### 1. 准备环境
+### 环境要求
 
-- Node.js 22（当前实测 `22.23.4`）
-- pnpm 11.7（可用 `corepack enable && corepack prepare pnpm@11.7.0 --activate`）
-- PostgreSQL 14+（当前实测 14.24）
-- Git
+- Docker Engine 与 Compose v2
+- 建议至少 4 GB 内存、20 GB 可用磁盘
 
-只需要 Node 与 PostgreSQL；不需要复制云主机，也不需要把现有数据库文件搬走。代码、迁移和合成种子都在仓库里。
-
-### 2. 克隆与安装
+### 启动服务
 
 ```bash
 git clone https://github.com/Zhe-SH-CN/entropy-tutor-mvp.git
 cd entropy-tutor-mvp
-pnpm install --frozen-lockfile
 cp .env.example .env
 ```
 
-编辑 `.env`：本地可保留 `DATABASE_URL` 和 `AI_MODE=mock`，但必须替换 `SESSION_SECRET`、`BYOK_MASTER_KEY`、`PAYMENT_WEBHOOK_SECRET`。可用 `openssl rand -hex 32` 分别生成。`.env` 已被 Git 忽略，禁止提交真实密钥。
-
-### 3. 创建本地合成数据库
-
-以下 SQL 仅用于本地 Demo；`mvp/mvp` 和 `CREATEDB` 不得沿用到生产：
-
-```sql
-CREATE ROLE mvp LOGIN CREATEDB PASSWORD 'mvp';
-CREATE DATABASE entropy_tutor OWNER mvp;
-CREATE DATABASE entropy_tutor_test OWNER mvp;
-```
-
-应用迁移并生成客户端：
+替换 `.env` 中所有 `replace-with-*` 配置。可使用 `openssl rand -hex 32` 分别生成独立秘密。
 
 ```bash
+docker compose up --build -d
+docker compose ps
+```
+
+仅在全新的合成数据库中初始化一次演示数据：
+
+```bash
+docker compose run --rm -e DEMO_SEED=true migrate pnpm seed
+```
+
+> **破坏性操作：** Seed 会删除并重建 Demo 数据。不得对包含重要数据的数据库执行。
+
+访问入口：
+
+- 应用：<http://localhost:3000/server-demo>
+- API 健康检查：<http://localhost:3001/api/v1/health>
+- OpenAPI：<http://localhost:3001/api/docs>
+
+使用 `docker compose down` 停止服务，PostgreSQL 数据保留在命名卷中。HTTPS、升级、备份与恢复见[部署指南](docs/deployment.md)。
+
+## 本地开发
+
+环境要求：Node.js 22、pnpm 11.7、PostgreSQL 14+、Git。
+
+```bash
+pnpm install --frozen-lockfile
+cp .env.example .env
 pnpm prisma:generate
 pnpm exec prisma migrate deploy --schema prisma/schema.prisma
-DATABASE_URL=postgresql://mvp:mvp@127.0.0.1:5432/entropy_tutor_test \
-  pnpm exec prisma migrate deploy --schema prisma/schema.prisma
-```
-
-### 4. 初始化合成数据并启动
-
-> 警告：`seed` 会清空并重建 Demo 表。不要对任何含真实数据的数据库执行。
-
-```bash
 DEMO_SEED=true pnpm seed
 pnpm dev
 ```
 
-另开终端启动后台 worker，处理邀请过期和任务重试：
+在另一个终端启动 Worker：
 
 ```bash
 pnpm --filter @mvp/api worker:dev
 ```
 
-访问：
+数据库初始化和常用开发流程见[开发指南](docs/development.md)。
 
-- 本地切片演示：`http://localhost:3000/`
-- **真实全栈入口**：`http://localhost:3000/server-demo`
-- OpenAPI：`http://localhost:3001/api/docs`
-- 健康检查：`http://localhost:3001/api/v1/health`
+## 演示账号
 
-浏览器只访问 Web 的 `/api/v1`，Next.js 服务端通过 `API_ORIGIN` 转发到 NestJS；不要把本机 API 地址写进前端代码。
+| 角色 | 邮箱                | 密码           |
+| ---- | ------------------- | -------------- |
+| 家长 | `parent@demo.test`  | `DemoPass123!` |
+| 教师 | `teacher@demo.test` | `DemoPass123!` |
+| 运营 | `ops@demo.test`     | `DemoPass123!` |
 
-### 5. 合成账号
+以上账号为公开合成凭据。任何部署都必须置于访问控制之后，不得作为公开注册服务直接暴露。
 
-统一密码：`DemoPass123!`
-
-| 角色 | 邮箱                |
-| ---- | ------------------- |
-| 家长 | `parent@demo.test`  |
-| 教师 | `teacher@demo.test` |
-| 运营 | `ops@demo.test`     |
-
-四名教师档案均为合成数据，其中一名初始待审核。支付和会议是沙箱，不发生真实扣款，也不创建真实会议。
-
-## 验证
+## 质量检查
 
 ```bash
 pnpm typecheck
@@ -118,51 +106,48 @@ pnpm lint
 pnpm test
 pnpm build
 pnpm audit --prod
-```
-
-浏览器测试：
-
-```bash
 pnpm exec playwright install chromium
 pnpm test:e2e
 ```
 
-`pnpm test` 会重置独立测试库 `entropy_tutor_test`；`pnpm test:e2e` 会重置主 Demo 库。两者都不得指向真实数据库。
+测试使用合成数据，并重置相应数据库。执行前请阅读[测试指南](docs/testing.md)。
 
-本轮验收目标：共享推荐规则 13 项、API 6 项、Chromium 8 项，外加全仓 typecheck/lint/build。最终实际结果以 [`docs/security-review-c.md`](docs/security-review-c.md) 为准，不把历史通过记录自动延伸到后续改动。
+GitHub Actions 中的 **Container verification** 工作流可手动构建并验收完整 Compose 环境，包括浏览器主链和持久化检查；不会因 push 自动运行。
 
-## 二次开发规则
+## 仓库结构
 
-1. 新功能先读 PRD、行为合同和相邻实现；页面按钮必须连接真实 API，不能只做静态占位。
-2. 修改数据模型时新增 Prisma 迁移，不改已经部署的历史迁移：本地用 `pnpm prisma:migrate`，其他环境用 `prisma migrate deploy`。
-3. 推荐规则只在 `packages/shared` 修改；必须保留输入快照、规则版本、探索配额和回放测试，不能用 LLM 主观评分直接排序教师。
-4. 所有 AI 内容先存草稿，教师确认后才对家长生效；原始草稿和教师修改均保留。
-5. 事件只保存状态、版本、计数和引用；不得写入电话、详细地址、证件原文、支付敏感信息、AI 全文或自由文本评论。
-6. 权限、持久写、支付回调、worker 和异步 UI 改动必须补真实入口测试；每次功能完成后执行安全审查。
-7. 不提交 `.env`、真实附件、真实家庭/教师个人信息、测试截图中的敏感信息或生产转储。
-
-## 协作流程
-
-```bash
-git checkout -b feat/<简短功能名>
-# 修改并完成上述验证
-git add -A
-git commit -m "feat: <变更说明>"
-git push -u origin feat/<简短功能名>
+```text
+apps/
+  web/                 Next.js 家长、教师与运营界面
+  api/                 NestJS API 与后台 Worker
+packages/
+  shared/              共享合同与确定性推荐规则
+prisma/
+  schema.prisma        数据模型
+  migrations/          版本化数据库迁移
+  seed.ts              合成演示数据
+tests/e2e/             Chromium 端到端测试
+infra/
+  Dockerfile           多阶段容器构建
+compose.yaml           Web、API、Worker、迁移与 PostgreSQL 编排
+docs/                  架构、开发、部署、测试与领域规范
 ```
 
-通过 Pull Request 二次开发。本轮按用户要求不创建 GitHub Workflow；协作者需在本地执行上述检查。
+## 文档索引
 
-## 许可证与协作边界
+- [系统架构](docs/architecture.md)
+- [开发指南](docs/development.md)
+- [部署指南](docs/deployment.md)
+- [测试指南](docs/testing.md)
+- [安全模型](docs/security.md)
+- [产品范围与覆盖](docs/prd-coverage.md)
+- [事件字典](docs/event-dictionary.md)
+- [技术选型 ADR](docs/ADR-001-tech-stack.md)
 
-本项目采用 [PolyForm Noncommercial 1.0.0](LICENSE.md)：允许查看、修改和非商业使用，商业使用需另行取得权利人的许可。它是源码可见（source-available）许可证，不是 OSI 定义的开源许可证。第三方依赖仍遵循各自许可证。
+## 协作与安全
 
-团队内部二次开发可以继续进行；你们作为权利人的后续商业授权、贡献代码权属和对外分发方式，应由创始团队另行明确。
+二次开发流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，漏洞报告与凭据处理见 [SECURITY.md](SECURITY.md)。
 
-## 尚未完成、不能误称完成的事项
+## 许可证
 
-- 真实托管模型的密钥、预算、内容质量和故障恢复未做供应商验收；默认使用 Mock。
-- 支付、退款和视频会议仍为沙箱；未发生真实交易。
-- 未进行真实教师/家庭试点；合成履约数据不能证明付费、续课或学习效果。
-- 当前没有为你的正式服务器部署公开 URL，也没有验证容器或 PostgreSQL 17；`infra/` 仅为早期草稿。
-- 正式环境需要 HTTPS、Secure Cookie、独立强密钥、最小数据库权限、备份恢复、日志与监控，不能用本地弱口令上线。
+采用 [PolyForm Noncommercial 1.0.0](LICENSE.md)。允许查看、修改和非商业使用；商业使用须另行取得权利人许可。该许可证属于源码可见许可证，不是 OSI 认可的开源许可证。第三方依赖仍遵循各自许可证。

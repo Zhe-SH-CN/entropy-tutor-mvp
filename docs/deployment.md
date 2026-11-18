@@ -1,181 +1,205 @@
-# 服务器部署与 Docker / Workflow 研判
+# 部署指南
 
-本文回答两个不同问题：如何现在把内部 Demo 放到自己的服务器，以及后续如何用 Docker 和 GitHub Actions 降低维护成本。公开 GitHub 仓库不代表应该把演示服务公开到互联网。
+本文定义基于 Docker Compose 的单机部署方式，适用于内部演示和二次开发环境。真实用户上线前仍需完成[安全模型](security.md)中的供应商、账号和运营验收。
 
-## 先选部署路径
+候选提交可先通过 GitHub Actions 的 **Container verification** 手动工作流完成镜像构建和全栈冒烟；验证范围见[测试指南](testing.md)。该工作流不替代目标服务器的访问控制、备份和恢复验收。
 
-| 路径                               | 当前建议                                   | 适用场景                                           |
-| ---------------------------------- | ------------------------------------------ | -------------------------------------------------- |
-| Node 22 + PostgreSQL + SSH 隧道    | **现在可用，已按此技术栈实际验证**         | 你和朋友短期内部演示，不开放公网                   |
-| Dockerfile + Compose               | **推荐目标形态，但现有文件仍是未验证草稿** | 单机长期运行、统一依赖、简化迁移和重启             |
-| GitHub Workflow CI                 | 推荐下一步实施                             | PR 自动跑规则、API、构建和浏览器测试               |
-| Workflow 自动部署 CD               | 暂缓                                       | 需要服务器 SSH、域名、秘密管理、回滚和备份均已确定 |
-| Kubernetes / 微服务 / 独立推荐服务 | 当前不做                                   | 没有吞吐量或团队规模依据                           |
+## 服务组成
 
-**不需要复制云电脑，也不需要手工同步一堆全局依赖。** 目标服务器只需要代码、锁文件、`.env`、数据库迁移和合成种子。Docker 的价值是把 Node、pnpm、PostgreSQL 和三个进程封装成可重复环境，而不是增加一套必须学习的基础设施。
+| 服务       | 职责                                | 默认主机访问     |
+| ---------- | ----------------------------------- | ---------------- |
+| `postgres` | PostgreSQL 14 与持久卷              | 不发布端口       |
+| `migrate`  | 执行 `prisma migrate deploy` 后退出 | 无               |
+| `api`      | NestJS API                          | `127.0.0.1:3001` |
+| `worker`   | 邀请到期和后台任务                  | 不发布端口       |
+| `web`      | Next.js 与同源 API 反向代理         | `127.0.0.1:3000` |
 
-以下命令来自当前已验证的本地运行方式，但你的服务器主机、操作系统和 SSH 账号尚未提供，因此**尚未完成新服务器实机部署验证**。
+API 和 Web 默认仅绑定回环地址。局域网或公网访问应通过 SSH 隧道或受控 HTTPS 反向代理，不要直接把容器端口开放到所有接口。
 
-## 路径 A：现在用 Node + PostgreSQL 做内部演示
+Next.js 的同源 rewrite 在构建时确定。Compose 默认将 Web 的 `API_ORIGIN` 构建参数设为 `http://api:3001`；如改变内部 API 地址，必须同步修改该构建参数并重新构建 Web，不能只改运行时环境变量。
 
-### 服务器前提
+## 环境要求
 
-建议 Ubuntu 22.04/24.04，至少 2 vCPU、4GB 内存、20GB 磁盘。Node 22、pnpm 11.7、PostgreSQL 14+；当前实测是 Node 22.23.4、pnpm 11.7.0、PostgreSQL 14.24。其他 PostgreSQL 版本需要先跑测试。
+- 64 位 Linux 服务器，或支持 Docker 的本地开发机
+- Docker Engine 与 Compose v2
+- 建议至少 2 vCPU、4 GB 内存和 20 GB 可用磁盘
+- 可选：域名和 HTTPS 反向代理
 
-安全组/防火墙只开放 SSH；如后续启用 HTTPS，再开放 443。不要对公网开放 3000、3001、5432。
+## 首次部署
 
-### 1. 安装和克隆
-
-Node 可使用发行版可信的 NodeSource 安装脚本；执行前先检查下载内容：
+### 1. 获取代码和配置
 
 ```bash
-curl -fsSLo /tmp/nodesource_setup.sh https://deb.nodesource.com/setup_22.x
-less /tmp/nodesource_setup.sh
-sudo -E bash /tmp/nodesource_setup.sh
-sudo apt-get install -y nodejs postgresql
-node --version
-corepack enable
-corepack prepare pnpm@11.7.0 --activate
-
 git clone https://github.com/Zhe-SH-CN/entropy-tutor-mvp.git
 cd entropy-tutor-mvp
-pnpm install --frozen-lockfile
 cp .env.example .env
 ```
 
-### 2. 创建独立数据库账号
+### 2. 配置环境变量
 
-用强随机密码替换示例，不要继续使用 `mvp/mvp`，不要给应用账号 `CREATEDB`。密码写入 `DATABASE_URL` 前需要做 URL 编码。
-
-```sql
-CREATE ROLE entropy_app LOGIN PASSWORD '替换为独立强随机密码';
-CREATE DATABASE entropy_tutor OWNER entropy_app;
-```
-
-本地开发迁移曾使用带 CREATEDB 的 `mvp` 角色；服务器不要照搬。
-
-### 3. 配置服务器 `.env`
-
-仅 SSH 隧道演示时使用：
-
-```dotenv
-NODE_ENV=production
-DATABASE_URL=postgresql://entropy_app:URL编码后的密码@127.0.0.1:5432/entropy_tutor
-APP_ORIGIN=http://localhost:3000
-API_ORIGIN=http://127.0.0.1:3001
-API_PORT=3001
-SESSION_SECRET=替换为openssl生成的64位hex
-COOKIE_SECURE=false
-AI_MODE=mock
-AI_BASE_URL=
-AI_API_KEY=
-AI_MODEL=
-BYOK_MASTER_KEY=替换为另一组64位hex
-PAYMENT_WEBHOOK_SECRET=替换为另一组至少32字符随机秘密
-DEMO_SEED=false
-```
-
-用 `openssl rand -hex 32` 分别生成三组秘密，并只在服务器 `.env` 中保存。不要把生成结果发回聊天或提交 Git。`WEB_PORT` 当前只用于 Compose 主机端口映射，直接运行 Web 时固定为 3000。
-
-### 4. 迁移、一次性种子和构建
+替换 `.env` 中所有 `replace-with-*` 值。独立随机秘密可用以下方式生成：
 
 ```bash
-pnpm prisma:generate
-pnpm exec prisma migrate deploy --schema prisma/schema.prisma
-DEMO_SEED=true pnpm seed
-pnpm build
+openssl rand -hex 32
 ```
 
-`seed` 会清空并重建 Demo 表，只能在全新的合成数据库执行一次。之后保持 `DEMO_SEED=false`，升级时绝不能再次 seed。
+| 变量                     | 用途           | 部署要求                                               |
+| ------------------------ | -------------- | ------------------------------------------------------ |
+| `POSTGRES_USER`          | 容器数据库角色 | 使用独立应用角色名                                     |
+| `POSTGRES_PASSWORD`      | 容器数据库密码 | 高熵随机值，建议仅使用 URL 安全字符                    |
+| `POSTGRES_DB`            | 数据库名称     | 默认 `entropy_tutor`                                   |
+| `APP_ORIGIN`             | 浏览器访问来源 | 本机为 `http://localhost:3000`；HTTPS 部署使用正式来源 |
+| `SESSION_SECRET`         | 会话保护       | 至少 32 字符，使用独立随机值                           |
+| `BYOK_MASTER_KEY`        | BYOK 加密      | 32 字节随机十六进制，共 64 个字符                      |
+| `PAYMENT_WEBHOOK_SECRET` | 沙箱回调验签   | 至少 32 字符，使用独立随机值                           |
+| `COOKIE_SECURE`          | Secure Cookie  | 本机 HTTP 为 `false`；HTTPS 必须为 `true`              |
+| `AI_MODE`                | 模型模式       | 默认 `mock`                                            |
+| `DEMO_SEED`              | Seed 开关      | 保持 `false`，仅初始化命令显式开启                     |
 
-### 5. 启动三个进程
+`DATABASE_URL` 用于本地非容器开发。Compose 会根据 `POSTGRES_*` 变量生成容器内连接串。
 
-临时演示可开三个 tmux/SSH 窗口，分别运行：
+`.env` 包含秘密，不得提交 Git 或上传到公开渠道。
+
+### 3. 构建并启动
 
 ```bash
-pnpm --filter @mvp/api start
-pnpm --filter @mvp/api worker
-pnpm --filter @mvp/web start
+docker compose up --build -d
+docker compose ps
 ```
 
-服务器本机检查：
+启动顺序为 PostgreSQL 健康 → 数据库迁移成功 → API 健康 → Worker 与 Web。查看日志：
+
+```bash
+docker compose logs -f api worker web
+```
+
+### 4. 初始化合成数据
+
+仅在全新的 Demo 数据库中执行一次：
+
+```bash
+docker compose run --rm -e DEMO_SEED=true migrate pnpm seed
+```
+
+> **破坏性操作：** Seed 会清空并重建 Demo 数据。升级和日常重启不得执行 Seed。
+
+### 5. 验证
 
 ```bash
 curl --fail http://127.0.0.1:3001/api/v1/health
 curl --fail --head http://127.0.0.1:3000/server-demo
+docker compose ps
 ```
 
-你的电脑建立 SSH 隧道：
+应用入口为 `http://localhost:3000/server-demo`，OpenAPI 为 `http://localhost:3001/api/docs`。
+
+## SSH 隧道访问
+
+当 Web 仅绑定服务器回环地址时，可在访问端建立隧道：
 
 ```bash
-ssh -N -L 3000:127.0.0.1:3000 你的用户名@服务器IP
+ssh -N -L 3000:127.0.0.1:3000 <user>@<server>
 ```
 
-然后访问 `http://localhost:3000/server-demo`。朋友也可各自建立隧道；3000/3001 无需对公网开放。长期常驻建议改用已验证的 Compose，而不是一直依赖手工终端。
+随后访问 `http://localhost:3000/server-demo`。此方式不需要向公网开放 3000、3001 或 5432。
 
-## 如确实需要域名和 HTTPS
+## HTTPS 反向代理
 
-只有在访问控制方案明确后再做。将 `demo.example.com` 解析到服务器，使用 Caddy/Nginx 反代 `127.0.0.1:3000`，开放 443 而继续关闭 3000/3001/5432，并修改：
+使用 Caddy 时，可将内部域名反代到 Web：
+
+```caddyfile
+tutor.internal.example {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+同步修改 `.env`：
 
 ```dotenv
-APP_ORIGIN=https://demo.example.com
+APP_ORIGIN=https://tutor.internal.example
 COOKIE_SECURE=true
 ```
 
-API 的 OpenAPI 默认在 API 进程的 `/api/docs`；当前 Web 只反代 `/api/v1`，因此不应假设文档公网可访问。统一演示密码仍然存在，建议至少增加 IP allowlist、身份访问代理或内网限制，不能仅靠 HTTPS 保护演示账号。
-
-## 备份、升级与恢复
-
-备份，不要在升级前 seed：
+重建受配置影响的容器：
 
 ```bash
-sudo install -d -o postgres -g postgres -m 700 /var/lib/postgresql/backups
-sudo -u postgres pg_dump --format=custom \
-  --file=/var/lib/postgresql/backups/entropy_tutor_$(date +%Y%m%d_%H%M%S).dump entropy_tutor
+docker compose up -d
 ```
 
-升级：
+只开放 SSH 和 HTTPS 所需端口。统一演示密码仍然有效，因此 HTTPS 之外还必须配置内网限制、IP allowlist 或身份访问代理。
+
+## 日常运维
+
+### 查看状态和日志
 
 ```bash
-cd entropy-tutor-mvp
+docker compose ps
+docker compose logs --since=1h api worker web
+```
+
+### 停止与恢复
+
+```bash
+docker compose stop
+docker compose start
+```
+
+`docker compose down` 停止并删除容器，但保留 PostgreSQL 命名卷。除非明确需要永久删除全部 Demo 数据，不要使用 `docker compose down -v`。
+
+### 升级
+
+```bash
 git pull --ff-only
-pnpm install --frozen-lockfile
-pnpm prisma:generate
-pnpm build
-pnpm exec prisma migrate deploy --schema prisma/schema.prisma
-# 按所选进程管理方式重启 api、worker、web
+docker compose up --build -d
+docker compose ps
 ```
 
-恢复应先恢复到新数据库做冒烟验证，不直接覆盖现有库：
+迁移任务会执行尚未应用的数据库迁移。升级前必须备份，升级过程不得执行 Seed。
+
+## 备份与恢复
+
+### 备份
 
 ```bash
-sudo -u postgres createdb entropy_tutor_restore
-sudo -u postgres pg_restore --dbname=entropy_tutor_restore /var/lib/postgresql/backups/备份文件.dump
+mkdir -p backups
+docker compose exec -T postgres \
+  sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' \
+  > "backups/entropy_tutor_$(date +%Y%m%d_%H%M%S).sql"
+chmod 600 backups/*.sql
 ```
 
-回滚要同时考虑代码与数据库。仅凭 `git checkout` 旧提交不能撤销不兼容迁移，必要时应恢复升级前备份。
+备份包含业务数据，应按敏感文件管理并定期执行恢复演练。
 
-## 路径 B：Docker / Compose 可行性
+### 恢复到独立数据库验证
 
-现有 `infra/Dockerfile` 和 `infra/docker-compose.yml` 已具备 web/api/worker/postgres 的基本结构，但尚未执行过容器构建或冒烟测试，且仍有这些明确缺口：
+```bash
+docker compose exec -T postgres \
+  sh -c 'createdb -U "$POSTGRES_USER" entropy_tutor_restore'
 
-1. Compose 写的是 PostgreSQL 17，当前实测版本是 14.24，需要先统一或重新验证。
-2. 生产镜像复制整个 build 目录，包含开发依赖，镜像偏大；还应以非 root 用户运行。
-3. API 启动时自动执行迁移，正式环境应使用独立迁移步骤/角色，避免多副本同时迁移。
-4. 需要验证 Prisma 引擎、Argon2 原生依赖、Next standalone/工作区依赖和 worker 信号退出。
-5. 需要限制 API 主机端口、设置容器只读文件系统/资源限制，并证明备份卷可用。
+docker compose exec -T postgres \
+  sh -c 'psql -U "$POSTGRES_USER" -d entropy_tutor_restore' \
+  < backups/<backup-file>.sql
+```
 
-**建议保留单仓库多阶段 Dockerfile，Compose 管四个服务；不需要直接复制云电脑，也不需要 Kubernetes。** 但只有在构建、启动、迁移、三角色主链和备份恢复都通过后，才能把 Compose 写成推荐的一键部署命令。
+验证恢复库后再制定正式切换步骤。不要在未备份的情况下覆盖现有数据库。
 
-### 这台云电脑能否直接装 Docker
+## 回滚
 
-当前检查结果：无 Docker/Podman；有免密 sudo、约 9.7GB 可用磁盘、3.9GB 内存，但 `systemd` 状态为 offline，说明它是沙箱而非标准云服务器。具备尝试安装的基础，不代表 Docker daemon、iptables 和嵌套容器权限一定可用。需要实际安装并运行 `docker info`、构建和容器冒烟后才能下结论；本轮没有把“可能可行”写成“已验证可行”。
+代码回滚和数据库回滚必须分别评估：
 
-## GitHub Workflow 研判
+1. 停止 Web、API 和 Worker 写入。
+2. 确认当前迁移是否兼容旧代码。
+3. 不兼容时，从升级前备份恢复到独立数据库并完成验证。
+4. 部署目标提交并重新执行健康检查和主链冒烟。
 
-推荐先做两个 GitHub-hosted CI job，不做自动部署：
+仅切换到旧 Git 提交不能撤销不兼容的数据库迁移。
 
-1. `verify`：PostgreSQL 14 service → Node 22 + pnpm 11.7 → frozen install → Prisma generate/migrate → typecheck/lint → 规则与 API 测试 → build → production audit。
-2. `browser`：安装 Chromium 依赖，使用独立合成数据库执行 8 条 Playwright；上传失败 trace 和截图。
+## 上线前检查
 
-约束：workflow 默认 `permissions: contents: read`，只用 `ubuntu` GitHub-hosted runner，不执行不可信 PR 的自托管任务，不注入生产秘密。Docker build job 等 Dockerfile 实际验证后再加；CD 等服务器、SSH、域名和回滚方案确定后再加。
+- 所有占位秘密均已替换，`.env` 权限受控。
+- 演示账号不会被真实用户使用，真实账号开通流程已建立。
+- HTTPS、Secure Cookie、访问控制和防火墙生效。
+- PostgreSQL 不公开端口，应用数据库权限最小化。
+- 备份、恢复和升级回滚已演练。
+- 真实模型、支付、退款和会议供应商已分别验收。
+- 日志、监控、配额和异常告警已配置。
