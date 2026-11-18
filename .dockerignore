@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+node_modules
+**/node_modules
+**/.next
+**/dist
+**/coverage
+test-results
+playwright-report
+docs/screenshots
+*.log
+.DS_Store

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "paths": { "@mvp/shared": ["packages/shared/src/index.ts"] }
+  },
+  "include": ["prisma/**/*.ts"]
+}

@@ -1,0 +1,306 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String           @id
+  email        String           @unique
+  passwordHash String
+  role         String
+  createdAt    DateTime         @default(now())
+  teacher      Teacher?
+  sessions     Session[]
+  events       EventLog[]
+  feedback     ParentFeedback[]
+  overrides    ManualOverride[]
+}
+
+model Session {
+  id           String   @id
+  tokenHash    String   @unique
+  csrfToken    String
+  userId       String
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, expiresAt])
+}
+
+model Teacher {
+  id                    String       @id
+  userId                String?      @unique
+  displayName           String
+  school                String
+  education             String
+  bio                   String
+  subjects              Json
+  gradeBands            Json
+  teachingModes         Json
+  areaCode              String
+  quotedPriceFen        Int
+  targetGrossHourlyFen  Int
+  identityVerified      Boolean
+  educationVerified     Boolean
+  transcriptVerified    Boolean
+  interviewScore        Int
+  currentLoad           Int
+  maxCapacity           Int
+  roundTripMinutes      Int
+  prepMinutes           Int
+  availability          Json
+  availabilityUpdatedAt DateTime     @default(now())
+  goalTags              Json
+  experienceTags        Json
+  styleTags             Json
+  isNew                 Boolean
+  metrics               Json
+  reviewStatus          String       @default("approved")
+  reviewNote            String?
+  reviewedBy            String?
+  credentials           Json?
+  createdAt             DateTime     @default(now())
+  user                  User?        @relation(fields: [userId], references: [id])
+  invitations           Invitation[]
+  relationships         Relationship[]
+  modelConfig           ModelConfig?
+}
+
+model Demand {
+  id                  String             @id
+  parentId            String
+  subject             String
+  gradeBand           String
+  mode                String
+  areaCode            String
+  budgetMinFen        Int
+  budgetMaxFen        Int
+  lessonMinutes       Int
+  preferredSlots      Json
+  objectives          Json
+  requiredExperience  Json
+  preferenceTags      Json
+  status              String             @default("draft")
+  rawText             String             @default("")
+  structuredPayload   Json?
+  confirmedAt         DateTime?
+  previousDemandId    String?
+  createdAt           DateTime           @default(now())
+  recommendations     RecommendationRun[]
+  invitations         Invitation[]
+  relationship        Relationship?
+  orders              PaymentOrder[]
+  @@index([parentId, createdAt])
+}
+
+model RecommendationRun {
+  id            String          @id
+  demandId      String
+  ruleVersion   String
+  inputSnapshot Json
+  results       Json
+  createdAt     DateTime        @default(now())
+  demand        Demand          @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  overrides     ManualOverride[]
+  @@index([demandId, createdAt])
+}
+
+model Invitation {
+  id           String    @id
+  demandId     String
+  teacherId    String
+  status       String    @default("invited")
+  createdAt    DateTime  @default(now())
+  respondedAt  DateTime?
+  expiresAt    DateTime?
+  declineReason String?
+  demand       Demand    @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  teacher      Teacher   @relation(fields: [teacherId], references: [id])
+  meeting      Meeting?
+  @@unique([demandId, teacherId])
+}
+
+model Meeting {
+  id              String     @id
+  invitationId    String     @unique
+  status          String     @default("scheduled")
+  provider        String     @default("sandbox")
+  meetingUrl      String
+  scheduledAt     DateTime
+  completedAt     DateTime?
+  parentOutcome   String?
+  teacherOutcome  String?
+  noShowParty     String?
+  rescheduleCount Int        @default(0)
+  cancelReason    String?
+  invitation      Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+}
+
+model Relationship {
+  id         String           @id
+  demandId   String           @unique
+  teacherId  String
+  status     String           @default("active")
+  createdAt  DateTime         @default(now())
+  demand     Demand           @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  teacher    Teacher          @relation(fields: [teacherId], references: [id])
+  lessons    Lesson[]
+  orders     PaymentOrder[]
+  artifacts  Artifact[]
+  feedback   ParentFeedback[]
+  learningStates LearningState[]
+}
+
+model PaymentOrder {
+  id             String       @id
+  relationshipId String
+  demandId       String
+  amountFen      Int
+  lessonCount    Int          @default(1)
+  status         String       @default("pending")
+  provider       String       @default("sandbox")
+  idempotencyKey String       @unique
+  providerRef    String?      @unique
+  createdAt      DateTime     @default(now())
+  paidAt         DateTime?
+  relationship   Relationship @relation(fields: [relationshipId], references: [id], onDelete: Cascade)
+  demand         Demand       @relation(fields: [demandId], references: [id], onDelete: Cascade)
+}
+
+model PaymentEvent {
+  id              String   @id
+  providerEventId String   @unique
+  orderId         String
+  payloadHash     String
+  createdAt       DateTime @default(now())
+}
+
+model Lesson {
+  id                  String           @id
+  relationshipId      String
+  sequence            Int
+  objective           String
+  evidence            String
+  nextPlan            String
+  status              String           @default("completion_marked")
+  scheduledAt         DateTime?
+  scheduleKey         String?          @unique
+  completionMarkedAt  DateTime?
+  completedAt         DateTime?
+  confirmedBy         String?
+  cancelReason        String?
+  createdAt           DateTime         @default(now())
+  relationship        Relationship     @relation(fields: [relationshipId], references: [id], onDelete: Cascade)
+  artifacts           Artifact[]
+  feedback            ParentFeedback[]
+  @@index([relationshipId, sequence])
+}
+
+model Artifact {
+  id            String         @id
+  lessonId      String?
+  relationshipId String?
+  kind          String
+  content       String
+  rawContent    String         @default("")
+  status        String         @default("draft")
+  provider      String
+  model         String
+  promptVersion String         @default("prompt_v0.2")
+  version       Int            @default(1)
+  createdAt     DateTime       @default(now())
+  confirmedAt   DateTime?
+  viewedAt      DateTime?
+  editedBy      String?
+  lesson        Lesson?        @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  relationship  Relationship?  @relation(fields: [relationshipId], references: [id], onDelete: Cascade)
+  @@unique([lessonId, kind, version])
+}
+
+model LearningState {
+  id             String       @id
+  relationshipId String
+  lessonId       String?
+  artifactId     String?      @unique
+  knowledgeTag   String
+  currentClaim   String
+  stateCode      String       @default("unverified")
+  evidence       String
+  confirmedBy    String?
+  confirmedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  relationship   Relationship @relation(fields: [relationshipId], references: [id], onDelete: Cascade)
+}
+
+model ParentFeedback {
+  id             String       @id
+  relationshipId String
+  lessonId       String?
+  parentId       String
+  continueIntent String
+  reasonCodes    Json
+  comment        String?
+  createdAt      DateTime     @default(now())
+  relationship   Relationship @relation(fields: [relationshipId], references: [id], onDelete: Cascade)
+  lesson         Lesson?      @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  parent         User         @relation(fields: [parentId], references: [id], onDelete: Cascade)
+}
+
+model ManualOverride {
+  id           String            @id
+  runId        String
+  operatorId   String
+  fromTeacherId String?
+  toTeacherId  String
+  reasonCode   String
+  reasonText   String
+  createdAt    DateTime          @default(now())
+  run          RecommendationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  operator     User              @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+}
+
+model ModelConfig {
+  id            String   @id
+  teacherId     String   @unique
+  mode          String
+  baseUrl       String
+  model         String
+  encryptedKey  String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  teacher       Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+}
+
+model EventLog {
+  id             String   @id
+  idempotencyKey String   @unique
+  name           String
+  schemaVersion  String   @default("v0.2")
+  actorId        String?
+  actorType      String   @default("user")
+  entityType     String
+  entityId       String
+  payload        Json
+  occurredAt     DateTime @default(now())
+  receivedAt     DateTime @default(now())
+  source         String   @default("server")
+  actor          User?    @relation(fields: [actorId], references: [id])
+  @@index([entityType, entityId, occurredAt])
+  @@index([name, occurredAt])
+}
+
+model Job {
+  id          String    @id
+  kind        String
+  payload     Json
+  status      String    @default("queued")
+  attempts    Int       @default(0)
+  availableAt DateTime  @default(now())
+  lockedAt    DateTime?
+  createdAt   DateTime  @default(now())
+  @@index([status, availableAt])
+}
