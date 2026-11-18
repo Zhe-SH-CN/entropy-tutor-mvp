@@ -2,7 +2,7 @@
 
 本文定义基于 Docker Compose 的单机部署方式，适用于内部演示和二次开发环境。真实用户上线前仍需完成[安全模型](security.md)中的供应商、账号和运营验收。
 
-候选提交可先通过 GitHub Actions 的 **Container verification** 手动工作流完成镜像构建和全栈冒烟；验证范围见[测试指南](testing.md)。该工作流不替代目标服务器的访问控制、备份和恢复验收。
+候选提交可先通过 GitHub Actions 的 **Container verification** 手动工作流完成镜像构建和全栈冒烟；验证范围见[测试指南](testing.md)。工作流默认在验收通过后将应用镜像发布到 GitHub Container Registry（GHCR），也可在手动触发时取消发布。该工作流不替代目标服务器的访问控制、备份和恢复验收。
 
 ## 服务组成
 
@@ -16,7 +16,32 @@
 
 API 和 Web 默认仅绑定回环地址。局域网或公网访问应通过 SSH 隧道或受控 HTTPS 反向代理，不要直接把容器端口开放到所有接口。
 
-Next.js 的同源 rewrite 在构建时确定。Compose 默认将 Web 的 `API_ORIGIN` 构建参数设为 `http://api:3001`；如改变内部 API 地址，必须同步修改该构建参数并重新构建 Web，不能只改运行时环境变量。
+Next.js 的同源 rewrite 在构建时确定。Compose 默认将应用镜像的 `API_ORIGIN` 构建参数设为 `http://api:3001`；如改变内部 API 地址，必须同步修改该构建参数并重新构建镜像，不能只改运行时环境变量。
+
+## 镜像发布与拉取
+
+手动运行 **Container verification** 时，`publish_image` 默认启用。仅在完整验收通过后，发布作业才会把同一个应用镜像推送到 GHCR，用于 API、Worker、Web 和迁移四个进程：
+
+- 不可变版本：`ghcr.io/zhe-sh-cn/entropy-tutor-mvp:sha-<短提交>`
+- 最新验收版本：`ghcr.io/zhe-sh-cn/entropy-tutor-mvp:latest`
+- 包页面：<https://github.com/Zhe-SH-CN/entropy-tutor-mvp/pkgs/container/entropy-tutor-mvp>
+
+生产或协作部署应优先使用不可变版本。`latest` 会随后续验收移动，不应作为可审计回滚的唯一依据。
+
+GHCR 包的可见性独立于代码仓库。私有包需要先在服务器执行 `docker login ghcr.io --username <github-user>`，并使用具有 `read:packages` 权限的凭据；不要把访问令牌写进 `.env`、Compose 文件或 shell 历史。需要匿名拉取时，由包所有者在 GHCR 的包设置中明确改为公开。
+
+在 `.env` 中指定已发布镜像后，可直接拉取而无需在服务器编译：
+
+```dotenv
+APP_IMAGE=ghcr.io/zhe-sh-cn/entropy-tutor-mvp:sha-<短提交>
+```
+
+```bash
+docker compose pull
+docker compose up --no-build -d
+```
+
+`APP_IMAGE` 必须在每次 Compose 命令使用的 `.env` 中保持一致。未配置时默认使用 `entropy-tutor-app:local`，适用于源码构建。
 
 ## 环境要求
 
@@ -43,18 +68,19 @@ cp .env.example .env
 openssl rand -hex 32
 ```
 
-| 变量                     | 用途           | 部署要求                                               |
-| ------------------------ | -------------- | ------------------------------------------------------ |
-| `POSTGRES_USER`          | 容器数据库角色 | 使用独立应用角色名                                     |
-| `POSTGRES_PASSWORD`      | 容器数据库密码 | 高熵随机值，建议仅使用 URL 安全字符                    |
-| `POSTGRES_DB`            | 数据库名称     | 默认 `entropy_tutor`                                   |
-| `APP_ORIGIN`             | 浏览器访问来源 | 本机为 `http://localhost:3000`；HTTPS 部署使用正式来源 |
-| `SESSION_SECRET`         | 会话保护       | 至少 32 字符，使用独立随机值                           |
-| `BYOK_MASTER_KEY`        | BYOK 加密      | 32 字节随机十六进制，共 64 个字符                      |
-| `PAYMENT_WEBHOOK_SECRET` | 沙箱回调验签   | 至少 32 字符，使用独立随机值                           |
-| `COOKIE_SECURE`          | Secure Cookie  | 本机 HTTP 为 `false`；HTTPS 必须为 `true`              |
-| `AI_MODE`                | 模型模式       | 默认 `mock`                                            |
-| `DEMO_SEED`              | Seed 开关      | 保持 `false`，仅初始化命令显式开启                     |
+| 变量                     | 用途           | 部署要求                                                           |
+| ------------------------ | -------------- | ------------------------------------------------------------------ |
+| `APP_IMAGE`              | 应用镜像       | 本地构建为 `entropy-tutor-app:local`；拉取部署使用 GHCR 完整镜像名 |
+| `POSTGRES_USER`          | 容器数据库角色 | 使用独立应用角色名                                                 |
+| `POSTGRES_PASSWORD`      | 容器数据库密码 | 高熵随机值，建议仅使用 URL 安全字符                                |
+| `POSTGRES_DB`            | 数据库名称     | 默认 `entropy_tutor`                                               |
+| `APP_ORIGIN`             | 浏览器访问来源 | 本机为 `http://localhost:3000`；HTTPS 部署使用正式来源             |
+| `SESSION_SECRET`         | 会话保护       | 至少 32 字符，使用独立随机值                                       |
+| `BYOK_MASTER_KEY`        | BYOK 加密      | 32 字节随机十六进制，共 64 个字符                                  |
+| `PAYMENT_WEBHOOK_SECRET` | 沙箱回调验签   | 至少 32 字符，使用独立随机值                                       |
+| `COOKIE_SECURE`          | Secure Cookie  | 本机 HTTP 为 `false`；HTTPS 必须为 `true`                          |
+| `AI_MODE`                | 模型模式       | 默认 `mock`                                                        |
+| `DEMO_SEED`              | Seed 开关      | 保持 `false`，仅初始化命令显式开启                                 |
 
 `DATABASE_URL` 用于本地非容器开发。Compose 会根据 `POSTGRES_*` 变量生成容器内连接串。
 
