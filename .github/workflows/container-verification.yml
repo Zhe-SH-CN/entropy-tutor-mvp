@@ -1,0 +1,152 @@
+name: Container verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-verification-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  COMPOSE_PROJECT_NAME: entropy-tutor-ci
+
+jobs:
+  compose-smoke:
+    name: Build and verify Docker Compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Generate ephemeral CI configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          postgres_password="$(openssl rand -hex 32)"
+          {
+            printf '%s\n' 'POSTGRES_USER=entropy_tutor'
+            printf 'POSTGRES_PASSWORD=%s\n' "$postgres_password"
+            printf '%s\n' 'POSTGRES_DB=entropy_tutor'
+            printf 'DATABASE_URL=postgresql://entropy_tutor:%s@127.0.0.1:5432/entropy_tutor\n' "$postgres_password"
+            printf '%s\n' 'APP_ORIGIN=http://localhost:3000'
+            printf 'SESSION_SECRET=%s\n' "$(openssl rand -hex 32)"
+            printf 'BYOK_MASTER_KEY=%s\n' "$(openssl rand -hex 32)"
+            printf 'PAYMENT_WEBHOOK_SECRET=%s\n' "$(openssl rand -hex 32)"
+            printf '%s\n' 'COOKIE_SECURE=false'
+            printf '%s\n' 'AI_MODE=mock'
+            printf '%s\n' 'DEMO_SEED=false'
+          } > .env
+          chmod 600 .env
+
+      - name: Build application image
+        run: docker compose build --pull
+
+      - name: Start services and apply migrations
+        run: docker compose up --detach
+
+      - name: Wait for API and Web health
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 240 bash -c '
+            until
+              curl --fail --silent --output /dev/null http://127.0.0.1:3001/api/v1/health &&
+              curl --fail --silent --output /dev/null http://127.0.0.1:3000/server-demo
+            do
+              sleep 3
+            done
+          '
+          docker compose ps
+
+      - name: Initialize synthetic data
+        run: docker compose run --rm -e DEMO_SEED=true migrate pnpm seed
+
+      - name: Verify runtime boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose exec -T api sh -c 'test "$(id -u)" = 1000'
+          docker compose exec -T worker sh -c 'test "$(id -u)" = 1000'
+          docker compose exec -T web sh -c 'test "$(id -u)" = 1000'
+          if docker compose port postgres 5432 > /dev/null 2>&1; then
+            printf '%s\n' 'PostgreSQL must not publish a host port.' >&2
+            exit 1
+          fi
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Enable Node.js and pnpm
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install browser test dependencies
+        run: |
+          corepack prepare pnpm@11.7.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Run Chromium product flows
+        run: pnpm exec playwright test
+
+      - name: Verify persistence across container recreation
+        shell: bash
+        run: |
+          set -euo pipefail
+          count_demands() {
+            docker compose exec -T postgres sh -c \
+              'psql -X -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "SELECT count(*) FROM \"Demand\";"' |
+              tr -d '[:space:]'
+          }
+
+          before="$(count_demands)"
+          test -n "$before"
+          test "$before" -gt 0
+
+          docker compose down
+          docker compose up --detach
+
+          timeout 240 bash -c '
+            until
+              curl --fail --silent --output /dev/null http://127.0.0.1:3001/api/v1/health &&
+              curl --fail --silent --output /dev/null http://127.0.0.1:3000/server-demo
+            do
+              sleep 3
+            done
+          '
+
+          after="$(count_demands)"
+          test "$after" = "$before"
+          printf 'Demand rows preserved after recreation: %s\n' "$after"
+          docker compose ps
+
+      - name: Collect diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ci-logs
+          docker compose ps > ci-logs/compose-ps.txt 2>&1 || true
+          docker compose logs --no-color > ci-logs/compose.log 2>&1 || true
+
+      - name: Upload verification artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: container-verification-${{ github.run_id }}
+          path: |
+            ci-logs/
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Clean up CI containers and volumes
+        if: always()
+        run: docker compose down --volumes --remove-orphans
